@@ -1,0 +1,2 @@
+-keep class xyz.nextalone.hyperzoomring.HookEntry
+-keep class * extends com.highcapable.yukihookapi.hook.xposed.proxy.IYukiHookXposedInit
