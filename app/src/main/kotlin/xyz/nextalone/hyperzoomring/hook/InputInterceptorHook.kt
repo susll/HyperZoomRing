@@ -1,5 +1,7 @@
 package xyz.nextalone.hyperzoomring.hook
 
+import android.app.ActivityManager
+import android.content.Context
 import android.content.Intent
 import android.util.Log
 import android.view.InputDevice
@@ -24,6 +26,8 @@ object InputInterceptorHook {
     const val EXTRA_INTENSITY = "intensity"
 
     private val detector = ZoomRingDetector()
+    private var dumpCount = 0
+    private const val MAX_DUMPS = 50
 
     fun hook(param: PackageParam, config: ConfigManager) = with(param) {
         Log.i(TAG, "Hooking InputManagerService.filterInputEvent")
@@ -40,21 +44,43 @@ object InputInterceptorHook {
                     val device = event.device ?: return@beforeHook
                     if (!isZoomRingDevice(device)) return@beforeHook
 
-                    val value = event.getAxisValue(MotionEvent.AXIS_SCROLL).toInt()
-                    val zoomEvent = ZoomRingEvent(timestampMs = event.eventTime, value = value)
-                    Log.d(TAG, "ZoomRing: value=$value, time=${event.eventTime}")
+                    val scrollValue = event.getAxisValue(MotionEvent.AXIS_SCROLL)
 
+                    // Always dump to capture both camera and non-camera mode data
+                    if (dumpCount < MAX_DUMPS) {
+                        dumpCount++
+                        val sb = StringBuilder("DUMP[$dumpCount] ")
+                        for (axis in 0..63) {
+                            val v = event.getAxisValue(axis)
+                            if (v != 0f) sb.append("ax$axis=$v ")
+                        }
+                        sb.append("action=${event.action} src=0x${event.source.toString(16)} t=${event.eventTime}")
+                        Log.i(TAG, sb.toString())
+                    }
+
+                    // Detect camera foreground
+                    val cameraInForeground = isCameraForeground(appContext)
+                    if (cameraInForeground) {
+                        // Camera mode: let event pass through, just log
+                        Log.d(TAG, "Camera mode: scroll=$scrollValue (pass through)")
+                        return@beforeHook
+                    }
+
+                    // Non-camera: consume event to block original behavior
+                    resultFalse()
+
+                    val value = scrollValue.toInt()
+                    val zoomEvent = ZoomRingEvent(timestampMs = event.eventTime, value = value)
                     val gesture = detector.onEvent(zoomEvent)
                     val intensity = detector.currentIntensity
-                    Log.d(TAG, "Gesture: $gesture, intensity=$intensity, cameraMode=${detector.isCameraMode}")
 
-                    // Send broadcast to app for diagnostic display
+                    // Broadcast to diagnostic UI
                     try {
                         val ctx = appContext ?: return@beforeHook
                         val intent = Intent(ACTION_ZOOM_RING_EVENT).apply {
                             setPackage("xyz.nextalone.hyperzoomring")
                             putExtra(EXTRA_TIMESTAMP, zoomEvent.timestampMs)
-                            putExtra(EXTRA_VALUE, zoomEvent.value)
+                            putExtra(EXTRA_VALUE, value)
                             putExtra(EXTRA_GESTURE, gesture.name)
                             putExtra(EXTRA_INTENSITY, intensity)
                         }
@@ -63,11 +89,9 @@ object InputInterceptorHook {
                         Log.w(TAG, "Failed to send diagnostic broadcast", e)
                     }
 
-                    if (!config.isEnabled || detector.isCameraMode) return@beforeHook
+                    if (!config.isEnabled) return@beforeHook
 
-                    val actionId = config.getActionId(gesture)
-                    Log.d(TAG, "Config lookup: gesture=${gesture.name}, actionId=$actionId, enabled=${config.isEnabled}")
-                    if (actionId == null) return@beforeHook
+                    val actionId = config.getActionId(gesture) ?: return@beforeHook
                     val action = ActionRegistry.get(actionId) ?: return@beforeHook
 
                     if (action is LaunchAppAction) {
@@ -76,7 +100,6 @@ object InputInterceptorHook {
 
                     val ctx = appContext ?: return@beforeHook
                     try {
-                        Log.i(TAG, "Executing action: ${action.id}")
                         action.execute(ctx, intensity)
                     } catch (e: Exception) {
                         Log.e(TAG, "Action execution failed: ${action.id}", e)
@@ -86,6 +109,14 @@ object InputInterceptorHook {
                 onHookingFailure { Log.e(TAG, "Failed to hook filterInputEvent", it) }
             }
         }
+    }
+
+    private fun isCameraForeground(context: Context?): Boolean {
+        val ctx = context ?: return false
+        val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return false
+        val tasks = am.getRunningTasks(1)
+        val topPackage = tasks.firstOrNull()?.topActivity?.packageName ?: return false
+        return topPackage == "com.android.camera" || topPackage == "com.xiaomi.camera"
     }
 
     private fun isZoomRingDevice(device: InputDevice): Boolean {
