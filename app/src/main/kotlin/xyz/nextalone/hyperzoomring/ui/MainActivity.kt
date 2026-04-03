@@ -10,7 +10,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                // Placeholder — MiuixTheme will replace MaterialTheme when compileSdk 37 is available
+                // Placeholder — screens added in later tasks
+                // TODO: Replace with MiuixTheme when AGP 9.1 + Kotlin 2.3 + compileSdk 37 available
             }
         }
     }

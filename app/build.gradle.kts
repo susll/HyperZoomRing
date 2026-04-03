@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "xyz.nextalone.hyperzoomring"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "xyz.nextalone.hyperzoomring"
@@ -57,7 +57,7 @@ dependencies {
     implementation(libs.compose.activity)
     implementation(libs.compose.navigation)
 
-    // Miuix UI — temporarily disabled until compileSdk 37 is available
+    // Miuix UI — requires AGP 9.1 + Kotlin 2.3 + compileSdk 37; Material3 used until toolchain catches up
     // implementation(libs.miuix.ui)
 
     // Test
