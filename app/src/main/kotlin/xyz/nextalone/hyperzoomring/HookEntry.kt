@@ -11,7 +11,9 @@ object HookEntry : IYukiHookXposedInit {
 
     override fun onHook() = encase {
         loadSystem {
-            val configManager = ConfigManager.fromYukiPrefs(prefs)
+            val configManager = ConfigManager.fromYukiPrefs(
+                prefs(ConfigManager.PREFS_NAME)
+            )
             InputInterceptorHook.hook(this, configManager)
         }
     }

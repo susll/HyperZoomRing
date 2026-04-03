@@ -1,5 +1,6 @@
 package xyz.nextalone.hyperzoomring.hook
 
+import android.content.Intent
 import android.util.Log
 import android.view.InputDevice
 import android.view.InputEvent
@@ -16,11 +17,13 @@ import xyz.nextalone.hyperzoomring.ring.ZoomRingEvent
 @Suppress("DEPRECATION")
 object InputInterceptorHook {
     private const val TAG = "HyperZoomRing"
-    private val detector = ZoomRingDetector()
-    private val eventListeners = mutableListOf<(ZoomRingEvent) -> Unit>()
+    const val ACTION_ZOOM_RING_EVENT = "xyz.nextalone.hyperzoomring.ZOOM_RING_EVENT"
+    const val EXTRA_TIMESTAMP = "timestamp"
+    const val EXTRA_VALUE = "value"
+    const val EXTRA_GESTURE = "gesture"
+    const val EXTRA_INTENSITY = "intensity"
 
-    fun addEventListener(listener: (ZoomRingEvent) -> Unit) { eventListeners.add(listener) }
-    fun removeEventListener(listener: (ZoomRingEvent) -> Unit) { eventListeners.remove(listener) }
+    private val detector = ZoomRingDetector()
 
     fun hook(param: PackageParam, config: ConfigManager) = with(param) {
         Log.i(TAG, "Hooking InputManagerService.filterInputEvent")
@@ -37,19 +40,34 @@ object InputInterceptorHook {
                     val device = event.device ?: return@beforeHook
                     if (!isZoomRingDevice(device)) return@beforeHook
 
-                    // Zoom ring value is on AXIS_SCROLL, not AXIS_VSCROLL
                     val value = event.getAxisValue(MotionEvent.AXIS_SCROLL).toInt()
                     val zoomEvent = ZoomRingEvent(timestampMs = event.eventTime, value = value)
                     Log.d(TAG, "ZoomRing: value=$value, time=${event.eventTime}")
-                    eventListeners.forEach { listener -> listener(zoomEvent) }
 
                     val gesture = detector.onEvent(zoomEvent)
                     val intensity = detector.currentIntensity
                     Log.d(TAG, "Gesture: $gesture, intensity=$intensity, cameraMode=${detector.isCameraMode}")
 
+                    // Send broadcast to app for diagnostic display
+                    try {
+                        val ctx = appContext ?: return@beforeHook
+                        val intent = Intent(ACTION_ZOOM_RING_EVENT).apply {
+                            setPackage("xyz.nextalone.hyperzoomring")
+                            putExtra(EXTRA_TIMESTAMP, zoomEvent.timestampMs)
+                            putExtra(EXTRA_VALUE, zoomEvent.value)
+                            putExtra(EXTRA_GESTURE, gesture.name)
+                            putExtra(EXTRA_INTENSITY, intensity)
+                        }
+                        ctx.sendBroadcast(intent)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to send diagnostic broadcast", e)
+                    }
+
                     if (!config.isEnabled || detector.isCameraMode) return@beforeHook
 
-                    val actionId = config.getActionId(gesture) ?: return@beforeHook
+                    val actionId = config.getActionId(gesture)
+                    Log.d(TAG, "Config lookup: gesture=${gesture.name}, actionId=$actionId, enabled=${config.isEnabled}")
+                    if (actionId == null) return@beforeHook
                     val action = ActionRegistry.get(actionId) ?: return@beforeHook
 
                     if (action is LaunchAppAction) {
@@ -58,6 +76,7 @@ object InputInterceptorHook {
 
                     val ctx = appContext ?: return@beforeHook
                     try {
+                        Log.i(TAG, "Executing action: ${action.id}")
                         action.execute(ctx, intensity)
                     } catch (e: Exception) {
                         Log.e(TAG, "Action execution failed: ${action.id}", e)
