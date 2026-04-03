@@ -1,15 +1,19 @@
 package xyz.nextalone.hyperzoomring.action
 
-import xyz.nextalone.hyperzoomring.action.actions.BrightnessAction
+import xyz.nextalone.hyperzoomring.action.actions.BrightnessDownAction
+import xyz.nextalone.hyperzoomring.action.actions.BrightnessUpAction
 import xyz.nextalone.hyperzoomring.action.actions.LaunchAppAction
-import xyz.nextalone.hyperzoomring.action.actions.VolumeAction
+import xyz.nextalone.hyperzoomring.action.actions.VolumeDownAction
+import xyz.nextalone.hyperzoomring.action.actions.VolumeUpAction
 
 object ActionRegistry {
     private val actions = mutableMapOf<String, Action>()
 
     init {
-        register(VolumeAction)
-        register(BrightnessAction)
+        register(VolumeUpAction)
+        register(VolumeDownAction)
+        register(BrightnessUpAction)
+        register(BrightnessDownAction)
         register(LaunchAppAction)
     }
 

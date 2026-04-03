@@ -8,4 +8,7 @@ object ZoomRingConstants {
     const val TICK_VALUE_CAMERA = -1
     const val SPEED_WINDOW_MS = 200L
     const val DEFAULT_SPEED_THRESHOLD = 5
+
+    /** Sensor type ID for mt350x optical tracking sensor. */
+    const val SENSOR_TYPE_OPTICAL_TRACKING = 33171136
 }

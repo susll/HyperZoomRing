@@ -17,7 +17,17 @@ class ZoomRingDetector(
         }
         val count = recentEvents.size
         currentIntensity = (count.toFloat() / (speedThreshold * 2)).coerceIn(0f, 1f)
-        return if (count > speedThreshold) GestureType.ROTATE_FAST else GestureType.ROTATE_SLOW
+
+        val fast = count > speedThreshold
+        return when {
+            event.isClockwise && fast -> GestureType.CW_FAST
+            event.isClockwise -> GestureType.CW_SLOW
+            event.isCounterClockwise && fast -> GestureType.CCW_FAST
+            event.isCounterClockwise -> GestureType.CCW_SLOW
+            // Fallback: no direction info, treat as CW
+            fast -> GestureType.CW_FAST
+            else -> GestureType.CW_SLOW
+        }
     }
 
     fun reset() {

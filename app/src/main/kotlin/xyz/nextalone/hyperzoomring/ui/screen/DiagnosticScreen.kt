@@ -39,7 +39,8 @@ fun DiagnosticScreen(modifier: Modifier = Modifier) {
                 val gesture = intent.getStringExtra(InputInterceptorHook.EXTRA_GESTURE) ?: ""
                 val intensity = intent.getFloatExtra(InputInterceptorHook.EXTRA_INTENSITY, 0f)
 
-                events.add(ZoomRingEvent(timestampMs = timestamp, value = value))
+                val direction = intent.getIntExtra(InputInterceptorHook.EXTRA_DIRECTION, 0)
+                events.add(ZoomRingEvent(timestampMs = timestamp, value = value, direction = direction))
                 lastGesture.value = gesture
                 lastIntensity.floatValue = intensity
 
@@ -101,9 +102,9 @@ fun DiagnosticScreen(modifier: Modifier = Modifier) {
         LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
             items(events.toList()) { event ->
                 val tf = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
-                val mode = if (event.isCameraMode) "CAM" else "DEF"
+                val dir = when { event.isClockwise -> "CW"; event.isCounterClockwise -> "CCW"; else -> "?" }
                 Text(
-                    "${tf.format(Date(event.timestampMs))} | val=${event.value} | $mode",
+                    "${tf.format(Date(event.timestampMs))} | val=${event.value} | $dir",
                     fontSize = 12.sp,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                 )
