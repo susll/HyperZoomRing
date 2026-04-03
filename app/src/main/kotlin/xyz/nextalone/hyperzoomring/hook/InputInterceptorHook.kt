@@ -5,6 +5,9 @@ import android.view.InputDevice
 import android.view.InputEvent
 import android.view.MotionEvent
 import com.highcapable.yukihookapi.hook.param.PackageParam
+import xyz.nextalone.hyperzoomring.action.ActionRegistry
+import xyz.nextalone.hyperzoomring.action.actions.LaunchAppAction
+import xyz.nextalone.hyperzoomring.config.ConfigManager
 import xyz.nextalone.hyperzoomring.ring.ZoomRingConstants
 import xyz.nextalone.hyperzoomring.ring.ZoomRingDetector
 import xyz.nextalone.hyperzoomring.ring.ZoomRingEvent
@@ -18,7 +21,7 @@ object InputInterceptorHook {
     fun addEventListener(listener: (ZoomRingEvent) -> Unit) { eventListeners.add(listener) }
     fun removeEventListener(listener: (ZoomRingEvent) -> Unit) { eventListeners.remove(listener) }
 
-    fun hook(param: PackageParam) = with(param) {
+    fun hook(param: PackageParam, config: ConfigManager) = with(param) {
         Log.i(TAG, "Hooking InputManagerService for zoom ring interception")
 
         "com.android.server.input.InputManagerService".toClass().hook {
@@ -41,6 +44,22 @@ object InputInterceptorHook {
                     val gesture = detector.onEvent(zoomEvent)
                     val intensity = detector.currentIntensity
                     Log.d(TAG, "Gesture: $gesture, intensity=$intensity, cameraMode=${detector.isCameraMode}")
+
+                    if (!config.isEnabled || detector.isCameraMode) return@beforeHook
+
+                    val actionId = config.getActionId(gesture) ?: return@beforeHook
+                    val action = ActionRegistry.get(actionId) ?: return@beforeHook
+
+                    if (action is LaunchAppAction) {
+                        LaunchAppAction.targetPackage = config.getActionConfig(gesture)
+                    }
+
+                    val ctx = appContext ?: return@beforeHook
+                    try {
+                        action.execute(ctx, intensity)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Action execution failed: ${action.id}", e)
+                    }
                 }
             }.result {
                 onHookingFailure {
