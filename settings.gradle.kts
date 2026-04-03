@@ -11,6 +11,11 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven("https://api.xposed.info/")
+        maven("https://raw.githubusercontent.com/HighCapable/maven-repository/main/repository/releases") {
+            content {
+                includeGroupByRegex("com\\.highcapable.*")
+            }
+        }
     }
 }
 

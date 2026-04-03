@@ -57,8 +57,8 @@ dependencies {
     implementation(libs.compose.activity)
     implementation(libs.compose.navigation)
 
-    // Miuix UI
-    implementation(libs.miuix.ui)
+    // Miuix UI — temporarily disabled until compileSdk 37 is available
+    // implementation(libs.miuix.ui)
 
     // Test
     testImplementation(libs.junit)
