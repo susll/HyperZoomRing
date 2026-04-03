@@ -29,8 +29,14 @@ object InputInterceptorHook {
     private val detector = ZoomRingDetector()
     private var sensorListener: ZoomRingSensorListener? = null
 
-    /** Direction data is considered stale after this many ms. */
     private const val DIRECTION_STALE_MS = 500L
+
+    /** Timestamp of last zoom ring input event we intercepted. */
+    @Volatile
+    private var lastZoomRingEventMs: Long = 0
+
+    /** If launchCamera is called within this window after a zoom ring event, block it. */
+    private const val CAMERA_BLOCK_WINDOW_MS = 2000L
 
     fun hook(param: PackageParam, config: ConfigManager) = with(param) {
         Log.i(TAG, "Hooking InputManagerService.filterInputEvent + optical tracking sensor")
@@ -46,6 +52,31 @@ object InputInterceptorHook {
             }
         }
 
+        // Block Xiaomi's camera launch ONLY when triggered by zoom ring rotation.
+        // Uses time window: if a zoom ring event was intercepted within the last 2s,
+        // the launchCamera call is from the zoom ring → block it.
+        // Other triggers (double-tap power, etc.) won't have a recent zoom ring event.
+        try {
+            "com.miui.server.input.util.ShortCutActionsUtils".toClass().hook {
+                injectMember {
+                    allMethods("launchCamera")
+                    beforeHook {
+                        if (!config.isEnabled) return@beforeHook
+                        val age = System.currentTimeMillis() - lastZoomRingEventMs
+                        if (age < CAMERA_BLOCK_WINDOW_MS) {
+                            Log.i(TAG, "Blocked zoom ring camera launch (${age}ms after ring event)")
+                            resultTrue()
+                        }
+                    }
+                }.result {
+                    onHookingFailure { Log.w(TAG, "Failed to hook ShortCutActionsUtils.launchCamera", it) }
+                }
+            }
+            Log.i(TAG, "Hooked ShortCutActionsUtils.launchCamera")
+        } catch (e: Exception) {
+            Log.w(TAG, "ShortCutActionsUtils not found", e)
+        }
+
         "com.android.server.input.InputManagerService".toClass().hook {
             injectMember {
                 method {
@@ -58,13 +89,15 @@ object InputInterceptorHook {
                     val device = event.device ?: return@beforeHook
                     if (!isZoomRingDevice(device)) return@beforeHook
 
-                    // Camera foreground: pass through
+                    // Record timing for camera launch blocking
+                    lastZoomRingEventMs = System.currentTimeMillis()
+
+                    // Camera foreground: pass through for normal zoom ring behavior
                     if (isCameraForeground(appContext)) return@beforeHook
 
-                    // Consume event to block original behavior (camera wake etc.)
+                    // Consume event to block original behavior
                     resultFalse()
 
-                    // Get direction from sensor listener
                     val direction = getDirection()
                     val scrollValue = event.getAxisValue(MotionEvent.AXIS_SCROLL).toInt()
                     val zoomEvent = ZoomRingEvent(
@@ -114,10 +147,6 @@ object InputInterceptorHook {
         }
     }
 
-    /**
-     * Get direction from sensor listener. Returns 1 (CW), -1 (CCW), or 0 (unknown).
-     * Direction is considered valid if the last sensor event was within DIRECTION_STALE_MS.
-     */
     private fun getDirection(): Int {
         val listener = sensorListener ?: return 0
         val age = System.currentTimeMillis() - listener.lastSensorTimestampMs
