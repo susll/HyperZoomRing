@@ -5,6 +5,12 @@ import xyz.nextalone.hyperzoomring.action.actions.BrightnessUpAction
 import xyz.nextalone.hyperzoomring.action.actions.FlashlightBrightnessDownAction
 import xyz.nextalone.hyperzoomring.action.actions.FlashlightBrightnessUpAction
 import xyz.nextalone.hyperzoomring.action.actions.LaunchAppAction
+import xyz.nextalone.hyperzoomring.action.actions.MediaFastForwardAction
+import xyz.nextalone.hyperzoomring.action.actions.MediaNextAction
+import xyz.nextalone.hyperzoomring.action.actions.MediaPreviousAction
+import xyz.nextalone.hyperzoomring.action.actions.MediaRewindAction
+import xyz.nextalone.hyperzoomring.action.actions.MediaSeekBackwardAction
+import xyz.nextalone.hyperzoomring.action.actions.MediaSeekForwardAction
 import xyz.nextalone.hyperzoomring.action.actions.VolumeDownAction
 import xyz.nextalone.hyperzoomring.action.actions.VolumeUpAction
 import xyz.nextalone.hyperzoomring.config.ConfigScope
@@ -21,6 +27,12 @@ object ActionRegistry {
         register(LaunchAppAction)
         register(FlashlightBrightnessUpAction)
         register(FlashlightBrightnessDownAction)
+        register(MediaPreviousAction)
+        register(MediaNextAction)
+        register(MediaFastForwardAction)
+        register(MediaRewindAction)
+        register(MediaSeekForwardAction)
+        register(MediaSeekBackwardAction)
     }
 
     private fun register(action: Action) { actions[action.id] = action }
