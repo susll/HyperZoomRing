@@ -28,20 +28,23 @@ object InputInterceptorHook {
 
     private val detector = ZoomRingDetector()
     private var sensorListener: ZoomRingSensorListener? = null
+    private lateinit var config: ConfigManager
 
     private const val DIRECTION_STALE_MS = 500L
 
-    /** Timestamp of last zoom ring input event we intercepted. */
     @Volatile
     private var lastZoomRingEventMs: Long = 0
-
-    /** If launchCamera is called within this window after a zoom ring event, block it. */
     private const val CAMERA_BLOCK_WINDOW_MS = 2000L
 
-    fun hook(param: PackageParam, config: ConfigManager) = with(param) {
-        Log.i(TAG, "Hooking InputManagerService.filterInputEvent + optical tracking sensor")
+    /** Track which hook fired to avoid double-processing. */
+    @Volatile
+    private var lastProcessedEventTime: Long = 0
 
-        // Start sensor listener for direction data
+    fun hook(param: PackageParam, config: ConfigManager) = with(param) {
+        this@InputInterceptorHook.config = config
+        Log.i(TAG, "Hooking InputManagerService + optical tracking sensor")
+
+        // Start sensor listener
         val ctx = appContext
         if (ctx != null) {
             try {
@@ -52,10 +55,7 @@ object InputInterceptorHook {
             }
         }
 
-        // Block Xiaomi's camera launch ONLY when triggered by zoom ring rotation.
-        // Uses time window: if a zoom ring event was intercepted within the last 2s,
-        // the launchCamera call is from the zoom ring → block it.
-        // Other triggers (double-tap power, etc.) won't have a recent zoom ring event.
+        // Block camera launch from zoom ring
         try {
             "com.miui.server.input.util.ShortCutActionsUtils".toClass().hook {
                 injectMember {
@@ -69,7 +69,7 @@ object InputInterceptorHook {
                         }
                     }
                 }.result {
-                    onHookingFailure { Log.w(TAG, "Failed to hook ShortCutActionsUtils.launchCamera", it) }
+                    onHookingFailure { Log.w(TAG, "Failed to hook launchCamera", it) }
                 }
             }
             Log.i(TAG, "Hooked ShortCutActionsUtils.launchCamera")
@@ -77,74 +77,134 @@ object InputInterceptorHook {
             Log.w(TAG, "ShortCutActionsUtils not found", e)
         }
 
-        "com.android.server.input.InputManagerService".toClass().hook {
-            injectMember {
-                method {
-                    name = "filterInputEvent"
-                    param(InputEvent::class.java, IntType)
-                }
-                beforeHook {
-                    val event = args(0).cast<InputEvent>() ?: return@beforeHook
-                    if (event !is MotionEvent) return@beforeHook
-                    val device = event.device ?: return@beforeHook
-                    if (!isZoomRingDevice(device)) return@beforeHook
+        val imsClass = "com.android.server.input.InputManagerService".toClass()
 
-                    // Record timing for camera launch blocking
-                    lastZoomRingEventMs = System.currentTimeMillis()
-
-                    // Camera foreground: pass through for normal zoom ring behavior
-                    if (isCameraForeground(appContext)) return@beforeHook
-
-                    // Consume event to block original behavior
-                    resultFalse()
-
-                    val direction = getDirection()
-                    val scrollValue = event.getAxisValue(MotionEvent.AXIS_SCROLL).toInt()
-                    val zoomEvent = ZoomRingEvent(
-                        timestampMs = event.eventTime,
-                        value = scrollValue,
-                        direction = direction,
-                    )
-
-                    val gesture = detector.onEvent(zoomEvent)
-                    val intensity = detector.currentIntensity
-
-                    // Broadcast to diagnostic UI
-                    try {
-                        val broadcastCtx = appContext ?: return@beforeHook
-                        val intent = Intent(ACTION_ZOOM_RING_EVENT).apply {
-                            setPackage("xyz.nextalone.hyperzoomring")
-                            putExtra(EXTRA_TIMESTAMP, zoomEvent.timestampMs)
-                            putExtra(EXTRA_VALUE, scrollValue)
-                            putExtra(EXTRA_DIRECTION, direction)
-                            putExtra(EXTRA_GESTURE, gesture.name)
-                            putExtra(EXTRA_INTENSITY, intensity)
+        // Hook 1: filterInputEvent (works when InputFilter is registered)
+        try {
+            imsClass.hook {
+                injectMember {
+                    method {
+                        name = "filterInputEvent"
+                        param(InputEvent::class.java, IntType)
+                    }
+                    beforeHook {
+                        val event = args(0).cast<InputEvent>() ?: return@beforeHook
+                        if (handleZoomRingEvent(event, appContext, canConsume = true)) {
+                            resultFalse()
                         }
-                        broadcastCtx.sendBroadcast(intent)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to send diagnostic broadcast", e)
                     }
-
-                    if (!config.isEnabled) return@beforeHook
-
-                    val actionId = config.getActionId(gesture) ?: return@beforeHook
-                    val action = ActionRegistry.get(actionId) ?: return@beforeHook
-
-                    if (action is LaunchAppAction) {
-                        LaunchAppAction.targetPackage = config.getActionConfig(gesture)
-                    }
-
-                    val actionCtx = appContext ?: return@beforeHook
-                    try {
-                        action.execute(actionCtx, intensity)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Action execution failed: ${action.id}", e)
-                    }
+                }.result {
+                    onHookingFailure { Log.w(TAG, "filterInputEvent hook failed", it) }
                 }
-            }.result {
-                onHookingFailure { Log.e(TAG, "Failed to hook filterInputEvent", it) }
             }
+            Log.i(TAG, "Hooked filterInputEvent")
+        } catch (e: Exception) {
+            Log.w(TAG, "filterInputEvent not available", e)
         }
+
+        // Hook 2: injectInputEvent (fallback, always called)
+        try {
+            imsClass.hook {
+                injectMember {
+                    allMethods("injectInputEvent")
+                    beforeHook {
+                        val event = args.firstOrNull() as? InputEvent ?: return@beforeHook
+                        if (handleZoomRingEvent(event, appContext, canConsume = true)) {
+                            resultFalse()
+                        }
+                    }
+                }.result {
+                    onHookingFailure { Log.w(TAG, "injectInputEvent hook failed", it) }
+                }
+            }
+            Log.i(TAG, "Hooked injectInputEvent")
+        } catch (e: Exception) {
+            Log.w(TAG, "injectInputEvent not available", e)
+        }
+
+        // Hook 3: dispatchUnhandledKey won't help for MotionEvent, but let's hook
+        // interceptKeyBeforeQueueing to catch any KeyEvent-based zoom ring events
+        try {
+            imsClass.hook {
+                injectMember {
+                    allMethods("interceptKeyBeforeQueueing")
+                    beforeHook {
+                        val event = args.firstOrNull() as? InputEvent ?: return@beforeHook
+                        val device = event.device ?: return@beforeHook
+                        if (isZoomRingDevice(device)) {
+                            Log.i(TAG, "ZoomRing KeyEvent intercepted via interceptKeyBeforeQueueing")
+                            lastZoomRingEventMs = System.currentTimeMillis()
+                        }
+                    }
+                }.result {
+                    onHookingFailure { /* expected if signature differs */ }
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Core event handler. Returns true if event was consumed (caller should block it).
+     */
+    private fun handleZoomRingEvent(event: InputEvent, context: Context?, canConsume: Boolean): Boolean {
+        if (event !is MotionEvent) return false
+        val device = event.device ?: return false
+        if (!isZoomRingDevice(device)) return false
+
+        // Deduplicate: if both hooks fire for the same event, only process once
+        val eventTime = event.eventTime
+        if (eventTime == lastProcessedEventTime) return canConsume && !isCameraForeground(context)
+        lastProcessedEventTime = eventTime
+
+        lastZoomRingEventMs = System.currentTimeMillis()
+
+        // Camera foreground: pass through
+        if (isCameraForeground(context)) return false
+
+        val direction = getDirection()
+        val scrollValue = event.getAxisValue(MotionEvent.AXIS_SCROLL).toInt()
+        val zoomEvent = ZoomRingEvent(
+            timestampMs = eventTime,
+            value = scrollValue,
+            direction = direction,
+        )
+
+        val gesture = detector.onEvent(zoomEvent)
+        val intensity = detector.currentIntensity
+
+        // Broadcast to diagnostic UI
+        try {
+            val ctx = context ?: return canConsume
+            val intent = Intent(ACTION_ZOOM_RING_EVENT).apply {
+                setPackage("xyz.nextalone.hyperzoomring")
+                putExtra(EXTRA_TIMESTAMP, zoomEvent.timestampMs)
+                putExtra(EXTRA_VALUE, scrollValue)
+                putExtra(EXTRA_DIRECTION, direction)
+                putExtra(EXTRA_GESTURE, gesture.name)
+                putExtra(EXTRA_INTENSITY, intensity)
+            }
+            ctx.sendBroadcast(intent)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to send diagnostic broadcast", e)
+        }
+
+        if (!config.isEnabled) return canConsume
+
+        val actionId = config.getActionId(gesture) ?: return canConsume
+        val action = ActionRegistry.get(actionId) ?: return canConsume
+
+        if (action is LaunchAppAction) {
+            LaunchAppAction.targetPackage = config.getActionConfig(gesture)
+        }
+
+        val ctx = context ?: return canConsume
+        try {
+            action.execute(ctx, intensity)
+        } catch (e: Exception) {
+            Log.e(TAG, "Action execution failed: ${action.id}", e)
+        }
+
+        return canConsume
     }
 
     private fun getDirection(): Int {
