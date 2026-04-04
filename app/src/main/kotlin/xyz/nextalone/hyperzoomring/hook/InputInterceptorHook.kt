@@ -53,6 +53,13 @@ object InputInterceptorHook {
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start sensor listener", e)
             }
+
+            try {
+                SceneDetector.init(ctx)
+                Log.i(TAG, "SceneDetector initialized")
+            } catch (e: Exception) {
+                Log.w(TAG, "SceneDetector init failed", e)
+            }
         }
 
         // Block camera launch from zoom ring
@@ -141,6 +148,11 @@ object InputInterceptorHook {
                 }
             }
         } catch (_: Exception) {}
+
+        // Fullscreen detection removed — hooking layout-pass methods
+        // (beginPostLayoutPolicyLw / applyPostLayoutPolicyLw) causes system_server
+        // to hang due to per-frame reflection overhead. Fullscreen scene is disabled
+        // until a low-cost detection method is found.
     }
 
     /**
@@ -151,15 +163,15 @@ object InputInterceptorHook {
         val device = event.device ?: return false
         if (!isZoomRingDevice(device)) return false
 
-        // Deduplicate: if both hooks fire for the same event, only process once
         val eventTime = event.eventTime
-        if (eventTime == lastProcessedEventTime) return canConsume && !isCameraForeground(context)
+        if (eventTime == lastProcessedEventTime) return canConsume
         lastProcessedEventTime = eventTime
-
         lastZoomRingEventMs = System.currentTimeMillis()
 
-        // Camera foreground: pass through
-        if (isCameraForeground(context)) return false
+        val foregroundPkg = getForegroundPackage(context)
+
+        // Camera override: overrideCamera=false means camera always gets passthrough
+        if (isCameraPackage(foregroundPkg) && !config.overrideCamera) return false
 
         val direction = getDirection()
         val scrollValue = event.getAxisValue(MotionEvent.AXIS_SCROLL).toInt()
@@ -172,7 +184,7 @@ object InputInterceptorHook {
         val gesture = detector.onEvent(zoomEvent)
         val intensity = detector.currentIntensity
 
-        // Broadcast to diagnostic UI
+        // Broadcast diagnostic event
         try {
             val ctx = context ?: return canConsume
             val intent = Intent(ACTION_ZOOM_RING_EVENT).apply {
@@ -190,11 +202,15 @@ object InputInterceptorHook {
 
         if (!config.isEnabled) return canConsume
 
-        val actionId = config.getActionId(gesture) ?: return canConsume
+        // Scene detection
+        val activeScene = context?.let { SceneDetector.detectActiveScene(it) }
+
+        // Unified resolution
+        val actionId = config.resolveActionId(gesture, foregroundPkg, activeScene) ?: return canConsume
         val action = ActionRegistry.get(actionId) ?: return canConsume
 
         if (action is LaunchAppAction) {
-            LaunchAppAction.targetPackage = config.getActionConfig(gesture)
+            LaunchAppAction.targetPackage = config.resolveActionConfig(gesture, foregroundPkg, activeScene)
         }
 
         val ctx = context ?: return canConsume
@@ -213,13 +229,15 @@ object InputInterceptorHook {
         return if (age < DIRECTION_STALE_MS) listener.lastDirection else 0
     }
 
-    private fun isCameraForeground(context: Context?): Boolean {
-        val ctx = context ?: return false
-        val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return false
+    private fun getForegroundPackage(context: Context?): String? {
+        val ctx = context ?: return null
+        val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return null
         val tasks = am.getRunningTasks(1)
-        val topPackage = tasks.firstOrNull()?.topActivity?.packageName ?: return false
-        return topPackage == "com.android.camera" || topPackage == "com.xiaomi.camera"
+        return tasks.firstOrNull()?.topActivity?.packageName
     }
+
+    private fun isCameraPackage(packageName: String?): Boolean =
+        packageName == "com.android.camera" || packageName == "com.xiaomi.camera"
 
     private fun isZoomRingDevice(device: InputDevice): Boolean {
         return device.name == ZoomRingConstants.DEVICE_NAME ||

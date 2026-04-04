@@ -38,21 +38,150 @@ class ConfigManager private constructor(private val store: PrefsStore) {
         get() = store.getBoolean("module_enabled", true)
         set(value) = store.putBoolean("module_enabled", value)
 
+    // --- Dispatch Mode ---
+    var dispatchMode: DispatchMode
+        get() = DispatchMode.fromKey(
+            store.getString("dispatch_mode", DispatchMode.GLOBAL.key) ?: DispatchMode.GLOBAL.key
+        )
+        set(value) = store.putString("dispatch_mode", value.key)
+
+    // --- Camera Override ---
+    var overrideCamera: Boolean
+        get() = store.getBoolean("override_camera", false)
+        set(value) = store.putBoolean("override_camera", value)
+
+    // --- Per-App ---
+    @Volatile
+    private var cachedPackages: Set<String>? = null
+
+    fun getConfiguredPackages(): Set<String> {
+        cachedPackages?.let { return it }
+        val raw = store.getString("per_app_configured_packages", null) ?: return emptySet()
+        val result = raw.split(",").filter { it.isNotBlank() }.toSet()
+        cachedPackages = result
+        return result
+    }
+
+    fun addConfiguredPackage(packageName: String) {
+        val current = getConfiguredPackages().toMutableSet()
+        current.add(packageName)
+        store.putString("per_app_configured_packages", current.joinToString(","))
+        cachedPackages = current
+    }
+
+    fun removeConfiguredPackage(packageName: String) {
+        val current = getConfiguredPackages().toMutableSet()
+        current.remove(packageName)
+        if (current.isEmpty()) {
+            store.remove("per_app_configured_packages")
+        } else {
+            store.putString("per_app_configured_packages", current.joinToString(","))
+        }
+        cachedPackages = current
+        GestureType.entries.forEach { gesture ->
+            store.remove("app_${packageName}_gesture_${gesture.name}_action_id")
+            store.remove("app_${packageName}_gesture_${gesture.name}_action_config")
+        }
+    }
+
+    fun getAppActionId(packageName: String, gesture: GestureType): String? =
+        store.getString("app_${packageName}_gesture_${gesture.name}_action_id", null)
+
+    fun setAppActionId(packageName: String, gesture: GestureType, actionId: String?) {
+        val key = "app_${packageName}_gesture_${gesture.name}_action_id"
+        if (actionId != null) store.putString(key, actionId) else store.remove(key)
+    }
+
+    fun getAppActionConfig(packageName: String, gesture: GestureType): String? =
+        store.getString("app_${packageName}_gesture_${gesture.name}_action_config", null)
+
+    fun setAppActionConfig(packageName: String, gesture: GestureType, config: String?) {
+        val key = "app_${packageName}_gesture_${gesture.name}_action_config"
+        if (config != null) store.putString(key, config) else store.remove(key)
+    }
+
+    // --- Per-Scene ---
+    fun getSceneActionId(scene: SceneType, gesture: GestureType): String? =
+        store.getString("scene_${scene.key}_gesture_${gesture.name}_action_id", null)
+
+    fun setSceneActionId(scene: SceneType, gesture: GestureType, actionId: String?) {
+        val key = "scene_${scene.key}_gesture_${gesture.name}_action_id"
+        if (actionId != null) store.putString(key, actionId) else store.remove(key)
+    }
+
+    fun getSceneActionConfig(scene: SceneType, gesture: GestureType): String? =
+        store.getString("scene_${scene.key}_gesture_${gesture.name}_action_config", null)
+
+    fun setSceneActionConfig(scene: SceneType, gesture: GestureType, config: String?) {
+        val key = "scene_${scene.key}_gesture_${gesture.name}_action_config"
+        if (config != null) store.putString(key, config) else store.remove(key)
+    }
+
+    // --- Unified Resolution ---
+    fun resolveActionId(gesture: GestureType, foregroundPkg: String?, activeScene: SceneType?): String? =
+        when (dispatchMode) {
+            DispatchMode.GLOBAL -> getActionId(gesture)
+            DispatchMode.PER_APP -> {
+                if (foregroundPkg != null && foregroundPkg in getConfiguredPackages()) {
+                    getAppActionId(foregroundPkg, gesture) ?: getActionId(gesture)
+                } else {
+                    getActionId(gesture)
+                }
+            }
+            DispatchMode.PER_SCENE -> {
+                if (activeScene != null) {
+                    getSceneActionId(activeScene, gesture) ?: getActionId(gesture)
+                } else {
+                    getActionId(gesture)
+                }
+            }
+        }
+
+    fun resolveActionConfig(gesture: GestureType, foregroundPkg: String?, activeScene: SceneType?): String? =
+        when (dispatchMode) {
+            DispatchMode.GLOBAL -> getActionConfig(gesture)
+            DispatchMode.PER_APP -> {
+                if (foregroundPkg != null && foregroundPkg in getConfiguredPackages()) {
+                    getAppActionConfig(foregroundPkg, gesture) ?: getActionConfig(gesture)
+                } else {
+                    getActionConfig(gesture)
+                }
+            }
+            DispatchMode.PER_SCENE -> {
+                if (activeScene != null) {
+                    getSceneActionConfig(activeScene, gesture) ?: getActionConfig(gesture)
+                } else {
+                    getActionConfig(gesture)
+                }
+            }
+        }
+
+    internal interface TestablePrefsStore : PrefsStore
+
     companion object {
         const val PREFS_NAME = "hyperzoomring_config"
 
         fun fromContext(context: Context): ConfigManager {
-            @Suppress("DEPRECATION")
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_WORLD_READABLE)
+            val prefs = try {
+                @Suppress("DEPRECATION")
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_WORLD_READABLE)
+            } catch (_: SecurityException) {
+                // MODE_WORLD_READABLE requires Xposed/LSPosed environment;
+                // fall back to private mode when running as normal app
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            }
             return ConfigManager(SharedPrefsStore(prefs))
         }
 
         fun fromYukiPrefs(prefs: YukiHookPrefsBridge): ConfigManager =
             ConfigManager(YukiPrefsStore(prefs))
+
+        internal fun forTest(store: TestablePrefsStore): ConfigManager =
+            ConfigManager(store)
     }
 }
 
-private interface PrefsStore {
+internal interface PrefsStore {
     fun getString(key: String, default: String?): String?
     fun getInt(key: String, default: Int): Int
     fun getBoolean(key: String, default: Boolean): Boolean
