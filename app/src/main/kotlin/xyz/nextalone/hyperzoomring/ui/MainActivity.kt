@@ -8,18 +8,17 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.lightColorScheme
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.basic.NavigationBar
+import top.yukonga.miuix.kmp.basic.NavigationBarItem
+import top.yukonga.miuix.kmp.basic.Scaffold
+import top.yukonga.miuix.kmp.basic.TopAppBar
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 import xyz.nextalone.hyperzoomring.ring.GestureType
 import xyz.nextalone.hyperzoomring.ui.screen.DiagnosticScreen
 import xyz.nextalone.hyperzoomring.ui.screen.GestureConfigScreen
@@ -30,16 +29,13 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme(
-                colorScheme = lightColorScheme(),
-            ) {
+            MiuixTheme {
                 MainContent()
             }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MainContent() {
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -52,10 +48,13 @@ private fun MainContent() {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("${gesture.displayName} 配置") },
+                    title = "${gesture.displayName} 配置",
                     navigationIcon = {
                         IconButton(onClick = { editingGesture = null }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "返回",
+                            )
                         }
                     },
                 )
@@ -69,20 +68,20 @@ private fun MainContent() {
         }
     } else {
         Scaffold(
-            topBar = { TopAppBar(title = { Text("HyperZoomRing") }) },
+            topBar = { TopAppBar(title = "HyperZoomRing") },
             bottomBar = {
                 NavigationBar {
                     NavigationBarItem(
                         selected = selectedTab == 0,
                         onClick = { selectedTab = 0 },
-                        label = { Text("主页") },
-                        icon = {},
+                        label = "主页",
+                        icon = Icons.Default.Home,
                     )
                     NavigationBarItem(
                         selected = selectedTab == 1,
                         onClick = { selectedTab = 1 },
-                        label = { Text("诊断") },
-                        icon = {},
+                        label = "诊断",
+                        icon = Icons.Default.Info,
                     )
                 }
             },

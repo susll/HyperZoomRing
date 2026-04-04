@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
 }
@@ -48,10 +47,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
 
-    kotlinOptions {
-        jvmTarget = "21"
-    }
-
     buildFeatures {
         compose = true
         buildConfig = true
@@ -70,11 +65,12 @@ dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
+    implementation(libs.compose.material.icons)
     implementation(libs.compose.activity)
     implementation(libs.compose.navigation)
 
-    // Miuix UI — requires AGP 9.1 + Kotlin 2.3 + compileSdk 37; Material3 used until toolchain catches up
-    // implementation(libs.miuix.ui)
+    // Miuix UI
+    implementation(libs.miuix)
 
     // Test
     testImplementation(libs.junit)
