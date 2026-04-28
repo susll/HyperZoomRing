@@ -3,6 +3,9 @@ package xyz.nextalone.hyperzoomring.hook
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.IBinder
 import android.util.Log
 import android.view.InputDevice
 import android.view.InputEvent
@@ -39,6 +42,10 @@ object InputInterceptorHook {
     /** Track which hook fired to avoid double-processing. */
     @Volatile
     private var lastProcessedEventTime: Long = 0
+
+    /** Host reference from our pass-through InputFilter. */
+    @Volatile
+    private var inputFilterHost: Any? = null
 
     fun hook(param: PackageParam, config: ConfigManager) = with(param) {
         this@InputInterceptorHook.config = config
@@ -149,6 +156,11 @@ object InputInterceptorHook {
             }
         } catch (_: Exception) {}
 
+        // CRITICAL: Register an InputFilter so that native InputDispatcher routes ALL
+        // hardware events through filterInputEvent (Java). Without this, the hooks above
+        // are never triggered because real hardware events bypass them entirely.
+        registerPassThroughFilter()
+
         // Fullscreen detection removed — hooking layout-pass methods
         // (beginPostLayoutPolicyLw / applyPostLayoutPolicyLw) causes system_server
         // to hang due to per-frame reflection overhead. Fullscreen scene is disabled
@@ -183,6 +195,8 @@ object InputInterceptorHook {
 
         val gesture = detector.onEvent(zoomEvent)
         val intensity = detector.currentIntensity
+
+        Log.i(TAG, "ZoomRing: scroll=$scrollValue dir=$direction gesture=$gesture intensity=%.2f".format(intensity))
 
         // Broadcast diagnostic event
         try {
@@ -242,5 +256,104 @@ object InputInterceptorHook {
     private fun isZoomRingDevice(device: InputDevice): Boolean {
         return device.name == ZoomRingConstants.DEVICE_NAME ||
             (device.vendorId == ZoomRingConstants.VENDOR_ID && device.productId == ZoomRingConstants.PRODUCT_ID)
+    }
+
+    /**
+     * Register a pass-through IInputFilter to enable the native filterInputEvent callback.
+     *
+     * Without an InputFilter registered, InputDispatcher (native) never calls back into
+     * InputManagerService.filterInputEvent for real hardware events — it dispatches them
+     * directly to windows via InputChannel. By registering a pass-through filter, ALL
+     * hardware events flow through filterInputEvent, where our [beforeHook] can intercept
+     * zoom ring events and consume them before the filter re-injects the rest.
+     *
+     * Retries on a background thread because the "input" service may not be registered yet
+     * when system_server boots.
+     */
+    private fun registerPassThroughFilter() {
+        val thread = HandlerThread("ZoomRingInputFilter").apply { start() }
+        val handler = Handler(thread.looper)
+        handler.post { registerWithRetry(handler, retries = 30, delayMs = 2000L) }
+    }
+
+    private fun registerWithRetry(handler: Handler, retries: Int, delayMs: Long) {
+        if (retries <= 0) {
+            Log.e(TAG, "Gave up registering InputFilter after all retries")
+            return
+        }
+
+        try {
+            // Get IInputManager binder via ServiceManager
+            val smClass = Class.forName("android.os.ServiceManager")
+            val getService = smClass.getDeclaredMethod("getService", String::class.java)
+            val binder = getService.invoke(null, "input") as? IBinder
+            if (binder == null) {
+                Log.w(TAG, "InputManagerService not ready yet, retrying in ${delayMs}ms ($retries left)")
+                handler.postDelayed({ registerWithRetry(handler, retries - 1, delayMs) }, delayMs)
+                return
+            }
+
+            val iimStubClass = Class.forName("android.hardware.input.IInputManager\$Stub")
+            val asInterface = iimStubClass.getDeclaredMethod("asInterface", IBinder::class.java)
+            val ims = asInterface.invoke(null, binder)
+            if (ims == null) {
+                Log.w(TAG, "IInputManager.Stub.asInterface returned null, retrying in ${delayMs}ms ($retries left)")
+                handler.postDelayed({ registerWithRetry(handler, retries - 1, delayMs) }, delayMs)
+                return
+            }
+
+            // Create a pass-through IInputFilter via dynamic proxy
+            val iInputFilterClass = Class.forName("android.view.IInputFilter")
+            val localBinder = android.os.Binder()
+
+            val filter = java.lang.reflect.Proxy.newProxyInstance(
+                iInputFilterClass.classLoader,
+                arrayOf(iInputFilterClass)
+            ) { _, method, args ->
+                when (method.name) {
+                    "asBinder" -> localBinder
+                    "install" -> {
+                        inputFilterHost = args?.firstOrNull()
+                        Log.d(TAG, "Pass-through InputFilter installed")
+                        null
+                    }
+                    "uninstall" -> {
+                        inputFilterHost = null
+                        Log.w(TAG, "Pass-through InputFilter uninstalled")
+                        null
+                    }
+                    "filterInputEvent" -> {
+                        // Pass every event through to the host so non-zoom-ring
+                        // events continue to reach foreground windows normally.
+                        val event = args?.get(0) as? InputEvent
+                        val policyFlags = args?.get(1) as? Int ?: 0
+                        val host = inputFilterHost
+                        if (host != null && event != null) {
+                            try {
+                                val sendMethod = host.javaClass.getMethod(
+                                    "sendInputEvent",
+                                    InputEvent::class.java,
+                                    Int::class.javaPrimitiveType
+                                )
+                                sendMethod.invoke(host, event, policyFlags)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "InputFilter.sendInputEvent failed", e)
+                            }
+                        }
+                        null
+                    }
+                    else -> null
+                }
+            }
+
+            // Call InputManagerService.setInputFilter(filter)
+            val setInputFilter = ims.javaClass.getMethod("setInputFilter", iInputFilterClass)
+            setInputFilter.invoke(ims, filter)
+
+            Log.i(TAG, "Registered pass-through InputFilter — events will now be intercepted")
+        } catch (e: Exception) {
+            Log.w(TAG, "InputFilter registration failed, retrying in ${delayMs}ms ($retries left)", e)
+            handler.postDelayed({ registerWithRetry(handler, retries - 1, delayMs) }, delayMs)
+        }
     }
 }
