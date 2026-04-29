@@ -14,6 +14,8 @@ import com.highcapable.yukihookapi.hook.param.PackageParam
 import com.highcapable.yukihookapi.hook.type.java.IntType
 import xyz.nextalone.hyperzoomring.action.ActionRegistry
 import xyz.nextalone.hyperzoomring.action.actions.LaunchAppAction
+import xyz.nextalone.hyperzoomring.action.actions.SwipeAction
+import xyz.nextalone.hyperzoomring.action.actions.TapCoordinateAction
 import xyz.nextalone.hyperzoomring.config.ConfigManager
 import xyz.nextalone.hyperzoomring.ring.ZoomRingConstants
 import xyz.nextalone.hyperzoomring.ring.ZoomRingDetector
@@ -46,6 +48,9 @@ object InputInterceptorHook {
     /** Host reference from our pass-through InputFilter. */
     @Volatile
     private var inputFilterHost: Any? = null
+
+    @Volatile
+    private var lastActionExecutedMs: Long = 0
 
     fun hook(param: PackageParam, config: ConfigManager) = with(param) {
         this@InputInterceptorHook.config = config
@@ -196,9 +201,6 @@ object InputInterceptorHook {
         val gesture = detector.onEvent(zoomEvent)
         val intensity = detector.currentIntensity
 
-        Log.i(TAG, "ZoomRing: scroll=$scrollValue dir=$direction gesture=$gesture intensity=%.2f".format(intensity))
-
-        // Broadcast diagnostic event
         try {
             val ctx = context ?: return canConsume
             val intent = Intent(ACTION_ZOOM_RING_EVENT).apply {
@@ -219,12 +221,24 @@ object InputInterceptorHook {
         // Scene detection
         val activeScene = context?.let { SceneDetector.detectActiveScene(it) }
 
-        // Unified resolution
+        val now = System.currentTimeMillis()
+        val throttleMs = config.throttleMs.toLong()
+        if (now - lastActionExecutedMs < throttleMs) return canConsume
+        lastActionExecutedMs = now
+
         val actionId = config.resolveActionId(gesture, foregroundPkg, activeScene) ?: return canConsume
         val action = ActionRegistry.get(actionId) ?: return canConsume
 
         if (action is LaunchAppAction) {
             LaunchAppAction.targetPackage = config.resolveActionConfig(gesture, foregroundPkg, activeScene)
+        }
+
+        if (action is SwipeAction) {
+            SwipeAction.parseConfig(config.resolveActionConfig(gesture, foregroundPkg, activeScene))
+        }
+
+        if (action is TapCoordinateAction) {
+            TapCoordinateAction.parseConfig(config.resolveActionConfig(gesture, foregroundPkg, activeScene))
         }
 
         val ctx = context ?: return canConsume
