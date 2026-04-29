@@ -34,6 +34,10 @@ class ConfigManager private constructor(private val store: PrefsStore) {
         get() = store.getInt("speed_threshold", ZoomRingConstants.DEFAULT_SPEED_THRESHOLD)
         set(value) = store.putInt("speed_threshold", value)
 
+    var throttleMs: Int
+        get() = store.getInt("throttle_ms", 200)
+        set(value) = store.putInt("throttle_ms", value)
+
     var isEnabled: Boolean
         get() = store.getBoolean("module_enabled", true)
         set(value) = store.putBoolean("module_enabled", value)

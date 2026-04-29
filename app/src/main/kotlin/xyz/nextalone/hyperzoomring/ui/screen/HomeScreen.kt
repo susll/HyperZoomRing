@@ -33,6 +33,7 @@ fun HomeScreen(
     var dispatchMode by remember(refreshTrigger) { mutableStateOf(config.dispatchMode) }
     var overrideCamera by remember(refreshTrigger) { mutableStateOf(config.overrideCamera) }
     var speedThreshold by remember(refreshTrigger) { mutableFloatStateOf(config.speedThreshold.toFloat()) }
+    var throttleMs by remember(refreshTrigger) { mutableFloatStateOf(config.throttleMs.toFloat()) }
 
     Column(
         modifier = modifier
@@ -124,6 +125,26 @@ fun HomeScreen(
                         val v = 2f + progress * 13f
                         speedThreshold = v
                         config.speedThreshold = v.toInt()
+                    },
+                )
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        SmallTitle("触发频率")
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text(
+                    "触发间隔: ${throttleMs.toInt()}ms",
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                Spacer(Modifier.height(8.dp))
+                Slider(
+                    value = (throttleMs - 50f) / 950f,
+                    onValueChange = { progress ->
+                        val v = 50f + progress * 950f
+                        throttleMs = v
+                        config.throttleMs = v.toInt()
                     },
                 )
             }
