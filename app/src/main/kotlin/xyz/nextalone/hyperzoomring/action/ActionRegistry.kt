@@ -11,6 +11,8 @@ import xyz.nextalone.hyperzoomring.action.actions.MediaPreviousAction
 import xyz.nextalone.hyperzoomring.action.actions.MediaRewindAction
 import xyz.nextalone.hyperzoomring.action.actions.MediaSeekBackwardAction
 import xyz.nextalone.hyperzoomring.action.actions.MediaSeekForwardAction
+import xyz.nextalone.hyperzoomring.action.actions.SwipeAction
+import xyz.nextalone.hyperzoomring.action.actions.TapCoordinateAction
 import xyz.nextalone.hyperzoomring.action.actions.VolumeDownAction
 import xyz.nextalone.hyperzoomring.action.actions.VolumeUpAction
 import xyz.nextalone.hyperzoomring.config.ConfigScope
@@ -33,6 +35,8 @@ object ActionRegistry {
         register(MediaRewindAction)
         register(MediaSeekForwardAction)
         register(MediaSeekBackwardAction)
+        register(SwipeAction)
+        register(TapCoordinateAction)
     }
 
     private fun register(action: Action) { actions[action.id] = action }
